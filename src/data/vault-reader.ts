@@ -85,7 +85,10 @@ export async function getWorkspaceStats(app: App, dirs: string[]): Promise<Works
   const allFiles = app.vault.getMarkdownFiles();
   const targetDirs = dirs.length > 0 ? dirs : DEFAULT_WORKSPACES;
   return targetDirs.map(dir => {
-    const files = allFiles.filter(f => f.path.startsWith(dir+"/") && !shouldSkip(f));
+    const files = allFiles.filter(f =>
+      f.path.startsWith(dir+"/") &&
+      !SKIP_DIRS.has(f.path.split("/")[1] ?? "")  // 只排除 _legacy/.thirdspace 子目录
+    );
     const lastMod = files.reduce((m,f) => Math.max(m, fileModified(app, f)), 0);
     return { dir, icon: WORKSPACE_ICONS[dir] ?? "◇", desc: dir.replace(/^\d+-/,""), fileCount: files.length, lastModified: lastMod };
   });
@@ -225,6 +228,25 @@ export async function toggleTodoInWorklog(app: App, item: TodoItem): Promise<voi
     } else {
       lines[i] = lines[i].replace(/^- \[ \]/, "- [x]") + ` ✅ ${today}`;
     }
+    await app.vault.modify(f, lines.join("\n"));
+    return;
+  }
+}
+
+export async function renameTodoInWorklog(app: App, item: TodoItem, newText: string): Promise<void> {
+  const path = getTodayWorklogPath();
+  const f = app.vault.getAbstractFileByPath(path) as TFile | null;
+  if (!f) return;
+  const md = await app.vault.read(f);
+  const lines = md.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(- \[[ x]\] )(.+)/);
+    if (!m) continue;
+    const cleaned = m[2].replace(/✅ \d{4}-\d{2}-\d{2}/g,"").trim();
+    if (cleaned !== item.text) continue;
+    // 保留完成状态和 ✅ 日期
+    const doneDate = m[2].match(/ ✅ \d{4}-\d{2}-\d{2}/)?.[0] ?? "";
+    lines[i] = `${m[1]}${newText}${doneDate}`;
     await app.vault.modify(f, lines.join("\n"));
     return;
   }

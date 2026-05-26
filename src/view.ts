@@ -4,11 +4,11 @@ import {
   loadWorkspaceIndex, getWorkspaceStats, getDailyActivity,
   loadProductStatus, parseProducts, getRecentFiles,
   loadTodos, loadTodayWorklog, getVaultStats, getTodayWorklogPath,
-  addTodoToWorklog, toggleTodoInWorklog,
+  addTodoToWorklog, toggleTodoInWorklog, renameTodoInWorklog,
   type WorkspaceStats, type TodoItem, type VaultStats, type TodayWorklog,
 } from "./data/vault-reader";
 import { buildSnakeCells } from "./data/worklog-parser";
-import { renderSnakeHeatmap } from "./components/snake-heatmap";
+import { renderSnakeHeatmap, type SnakeRouteCache } from "./components/snake-heatmap";
 
 export const VIEW_TYPE = "thirdspace-dashboard";
 
@@ -46,7 +46,7 @@ class TodoModal extends Modal {
 export class DashboardView extends ItemView {
   plugin: ThirdSpaceDashboard;
   private timer: number | null = null;
-  private snakeCache: string | null = null;   // cached SVG HTML — skip getBestRoute on re-renders
+  private snakeRouteCache: SnakeRouteCache | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: ThirdSpaceDashboard) {
     super(leaf); this.plugin = plugin;
@@ -87,7 +87,7 @@ export class DashboardView extends ItemView {
     const pill = hdrL.createDiv({ cls: `ts-pill ${wsIndex ? "ts-pill--ok" : "ts-pill--warn"}` });
     pill.setText(wsIndex ? `${wsStats.length} workspaces` : "no .thirdspace");
     const refreshBtn = hdr.createDiv({ cls: "ts-hdr-right" }).createEl("button", { cls: "ts-icon-btn", text: "↻" });
-    refreshBtn.addEventListener("click", () => { this.snakeCache = null; this.render(); });
+    refreshBtn.addEventListener("click", () => { this.snakeRouteCache = null; this.render(); });
 
     // ── Stats row
     this.renderStatsRow(contentEl, vaultStats, activity.filter(a=>a.count>0).length);
@@ -100,8 +100,8 @@ export class DashboardView extends ItemView {
     if (streak > 0) heatHd.createSpan({ cls: "ts-card-meta", text: `⚡ ${streak}d streak` });
     const heatBody = heatSec.createDiv({ cls: "ts-heatmap-body" });
     window.setTimeout(async () => {
-      const html = await renderSnakeHeatmap(heatBody, snakeCells, this.snakeCache ?? undefined);
-      if (html) this.snakeCache = html;
+      const cache = await renderSnakeHeatmap(heatBody, snakeCells, this.snakeRouteCache ?? undefined);
+      if (cache) this.snakeRouteCache = cache;
     }, 0);
 
     // ── Two columns
@@ -204,26 +204,53 @@ export class DashboardView extends ItemView {
   private renderTodoRow(parent: HTMLElement, item: TodoItem) {
     const row = parent.createDiv({ cls: `ts-todo-row${item.done ? " ts-todo-done" : ""}` });
     const chk = row.createEl("span", { cls: "ts-todo-chk", text: item.done ? "☑" : "☐" });
-    row.createSpan({ cls: "ts-todo-txt", text: item.text });
+    const txt = row.createSpan({ cls: "ts-todo-txt", text: item.text });
 
-    const toggle = async () => {
+    // checkbox 单击 = 切换完成状态
+    chk.addEventListener("click", async e => {
+      e.stopPropagation();
       await toggleTodoInWorklog(this.app, item);
       await this.render();
-    };
+    });
 
-    // checkbox 单击 = 切换
-    chk.addEventListener("click", async e => { e.stopPropagation(); await toggle(); });
-
-    // 行单击 = 打开文件（detail===2 时忽略，让双击事件接管）
+    // 单击行 = 打开文件（detail >= 2 时忽略，让 dblclick 接管）
     row.addEventListener("click", e => {
       if ((e as MouseEvent).detail >= 2) return;
       this.openFile(getTodayWorklogPath());
     });
 
-    // 行双击 = 切换（比点小 checkbox 更方便）
-    row.addEventListener("dblclick", async e => {
+    // 双击行 = inline 编辑文字
+    row.addEventListener("dblclick", e => {
       e.stopPropagation();
-      await toggle();
+      // 替换文字 span 为 input
+      const input = document.createElement("input");
+      input.type  = "text";
+      input.value = item.text;
+      input.className = "ts-todo-edit-input";
+      txt.replaceWith(input);
+      input.focus();
+      input.select();
+
+      // 阻止 input 上的所有点击冒泡到 row，防止触发 openFile
+      input.addEventListener("click",     e => e.stopPropagation());
+      input.addEventListener("mousedown", e => e.stopPropagation());
+
+      let saved = false;
+      const save = async () => {
+        if (saved) return;
+        saved = true;
+        const newText = input.value.trim();
+        if (newText && newText !== item.text) {
+          await renameTodoInWorklog(this.app, item, newText);
+        }
+        await this.render();
+      };
+
+      input.addEventListener("keydown", async ev => {
+        if (ev.key === "Enter")  { ev.preventDefault(); await save(); }
+        if (ev.key === "Escape") { saved = true; await this.render(); }
+      });
+      input.addEventListener("blur", save);
     });
   }
 

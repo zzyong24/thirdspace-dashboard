@@ -353,6 +353,19 @@
   transition: color .1s;
 }
 .ts-todo-chk:hover { color: var(--rust); }
+.ts-todo-edit-input {
+  flex: 1;
+  font-size: 11.5px;
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rust);
+  border-radius: 3px;
+  padding: 1px 5px;
+  outline: none;
+  min-width: 0;
+}
+body.theme-dark .ts-todo-edit-input { background: var(--surface); color: var(--ink); }
 .ts-todo-txt {
   font-size: 11.5px;
   color: var(--ink);
